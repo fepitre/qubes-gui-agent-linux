@@ -29,10 +29,9 @@ case $1 in
         done
         ;;
     openvm)
-        vm=$(zenity --entry --text "Enter the destination VM name:")
         for file in $files
         do
-            qvm-open-in-vm $vm "$file" | zenity --notification --text "Opening $file in VM $vm..." --timeout 3 &
+            qvm-open-in-vm '$default' "$file" | zenity --notification --text "Opening $file in VM..." --timeout 3 &
         done
         ;;
     opendvm)
