@@ -65,14 +65,23 @@ Obsoletes:  qubes-gui-vm < 4.0.0
 Summary: Audio support for Qubes VM
 # The vchan sink needs .h files from pulseaudio sources
 # that are not exported by any *-devel packages; thus they are internal and
-# possible to change across version. They are copied to gui git. 
+# possible to change across version. They are copied to gui git.
 # It is possible that our code will work fine with any later pulseaudio
 # version; but this needs to be verified for each pulseaudio version.
 Requires:	pulseaudio = %{pa_ver}
 Conflicts:  qubes-gui-vm < 4.0.0
 
 %description -n pulseaudio-qubes
- Pulseaudio module to enable sound support in Qubes VM
+Pulseaudio module to enable sound support in Qubes VM
+
+%package -n qubes-gui-agent-xfce
+Summary: XFCE desktop support for Qubes VM
+Requires: Thunar
+
+%description -n qubes-gui-agent-xfce
+XFCE desktop support for Qubes VM
+
+%description
 
 %define _builddir %(pwd)
 
@@ -113,11 +122,36 @@ fi
 sed -i '/^autospawn/d' /etc/pulse/client.conf
 echo autospawn=no >> /etc/pulse/client.conf
 
+
+%post -n qubes-gui-agent-xfce
+if [ "$1" = 1 ]; then
+  if [ -f /etc/xdg/Thunar/uca.xml ] ; then
+    cp -p /etc/xdg/Thunar/uca.xml{,.bak}
+    sed -i '$e cat /usr/lib/qubes/uca_qubes.xml' /etc/xdg/Thunar/uca.xml
+  fi
+  if [ -f /home/user/.config/Thunar/uca.xml ] ; then
+    cp -p /home/user/.config/Thunar/uca.xml{,.bak}
+    sed -i '$e cat /usr/lib/qubes/uca_qubes.xml' /home/user/.config/Thunar/uca.xml
+  fi
+fi
+
 %preun
 if [ "$1" = 0 ] ; then
 	chkconfig qubes-gui-agent off
     [ -x /bin/systemctl ] && /bin/systemctl disable qubes-gui-agent.service
     /usr/bin/glib-compile-schemas %{_datadir}/glib-2.0/schemas &> /dev/null || :
+fi
+
+%postun -n qubes-gui-agent-xfce
+if [ "$1" = 0 ]; then
+  if [ -f /etc/xdg/Thunar/uca.xml ] ; then
+    mv /etc/xdg/Thunar/uca.xml{,.uninstall}
+    mv /etc/xdg/Thunar/uca.xml{.bak,}
+  fi
+  if [ -f /home/user/.config/Thunar/uca.xml ] ; then
+    mv /home/user/.config/Thunar/uca.xml{,.uninstall}
+    mv /home/user/.config/Thunar/uca.xml{.bak,}
+  fi
 fi
 
 %posttrans
@@ -171,3 +205,8 @@ rm -f %{name}-%{version}
 /usr/bin/start-pulseaudio-with-vchan
 %{_libdir}/pulse-%{pa_ver}/modules/module-vchan-sink.so
 /etc/xdg/autostart/qubes-pulseaudio.desktop
+
+%files -n qubes-gui-agent-xfce
+/etc/X11/xinit/xinitrc.d/50-xfce-desktop.sh
+/usr/lib/qubes/qvm-actions.sh
+/usr/lib/qubes/uca_qubes.xml

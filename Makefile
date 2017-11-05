@@ -96,6 +96,8 @@ install-rh: appvm install-common
 		$(DESTDIR)/etc/X11/xinit/xinitrc.d/20qt-x11-no-mitshm.sh
 	install -D appvm-scripts/etc/X11/xinit/xinitrc.d/20qt-gnome-desktop-session-id.sh \
 		$(DESTDIR)/etc/X11/xinit/xinitrc.d/20qt-gnome-desktop-session-id.sh
+	install -D appvm-scripts/etc/X11/xinit/xinitrc.d/50-xfce-desktop.sh \
+                $(DESTDIR)/etc/X11/xinit/xinitrc.d/50-xfce-desktop.sh
 	install -m 0644 -D appvm-scripts/etc/X11/Xwrapper.config \
 		$(DESTDIR)/etc/X11/Xwrapper.config
 
@@ -129,6 +131,8 @@ install-common:
 		$(DESTDIR)$(LIBDIR)/xorg/modules/drivers/qubes_drv.so
 	install -D xf86-video-dummy/src/.libs/dummyqbs_drv.so \
 		$(DESTDIR)$(LIBDIR)/xorg/modules/drivers/dummyqbs_drv.so
+	install -D appvm-scripts/usr/lib/qubes/qvm-actions.sh \
+                $(DESTDIR)/usr/lib/qubes/qvm-actions.sh
 	install -m 0644 -D appvm-scripts/etc/X11/xorg-qubes.conf.template \
 		$(DESTDIR)/etc/X11/xorg-qubes.conf.template
 	install -m 0644 -D appvm-scripts/etc/profile.d/qubes-gui.sh \
@@ -161,4 +165,6 @@ endif
 		$(DESTDIR)/usr/lib/sysctl.d/30-qubes-gui-agent.conf
 	install -D -m 0644 appvm-scripts/usr/lib/modules-load.d/qubes-gui.conf \
 		$(DESTDIR)/usr/lib/modules-load.d/qubes-gui.conf
+	install -m 0644 -D appvm-scripts/usr/lib/qubes/uca_qubes.xml \
+                $(DESTDIR)/usr/lib/qubes/uca_qubes.xml
 	install -d $(DESTDIR)/var/log/qubes
