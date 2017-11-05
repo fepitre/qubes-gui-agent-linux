@@ -124,6 +124,10 @@ echo autospawn=no >> /etc/pulse/client.conf
 
 
 %post xfce
+# There is no system-wide Thunar custom actions. There is only a default
+# file and a user file created from the default one. Qubes actions need
+# to be placed after all already defined actions and before </actions>
+# the end of file.
 if [ "$1" = 1 ]; then
   if [ -f /etc/xdg/Thunar/uca.xml ] ; then
     cp -p /etc/xdg/Thunar/uca.xml{,.bak}
