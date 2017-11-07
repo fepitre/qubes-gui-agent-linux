@@ -23,13 +23,13 @@ case $1 in
     img)
         for file in $files
         do
-            qvm-convert-img $file | zenity --notification --text="Converting file $file..." --timeout 3
+            /usr/lib/qubes/qvm-convert-img.gnome $file
         done
         ;;
     pdf)
         for file in $files
         do
-            qvm-convert-pdf $file | zenity --notification --text="Converting file $file..." --timeout 3
+            /usr/lib/qubes/qvm-convert-pdf.gnome $file
         done
         ;;
     openvm)
