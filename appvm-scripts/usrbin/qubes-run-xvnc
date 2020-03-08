@@ -1,0 +1,36 @@
+#!/bin/sh
+#
+# The Qubes OS Project, http://www.qubes-os.org
+#
+# Copyright (C) 2020  Frédéric Pierret  <frederic.pierret@qubes-os.org>
+#
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of the GNU General Public License
+# as published by the Free Software Foundation; either version 2
+# of the License, or (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write to the Free Software
+# Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
+#
+#
+
+# Source common Qubes X related parameters
+# shellcheck disable=SC1091
+. /usr/bin/qubes-run-xcommon
+
+XVNC=/usr/bin/Xvnc
+OPTIONS_VNC="-SecurityTypes=None -rfbport 5900"
+
+if [ -e /usr/lib/x86_64-linux-gnu/qubes-gui-daemon/shmoverride.so ]; then
+    SHMOVERRIDE=/usr/lib/x86_64-linux-gnu/qubes-gui-daemon/shmoverride.so
+elif [ -e /usr/lib64/qubes-gui-daemon/shmoverride.so ]; then
+    SHMOVERRIDE=/usr/lib64/qubes-gui-daemon/shmoverride.so
+fi
+
+exec /usr/bin/qubes-gui-runuser "$DEFAULT_USER" /bin/sh -l -c "LD_PRELOAD=$SHMOVERRIDE exec /usr/bin/xinit $XSESSION qubes-session -- $XVNC :1 $OPTIONS_VNC > ~/.xvnc-errors 2>&1"

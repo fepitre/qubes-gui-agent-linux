@@ -77,9 +77,7 @@ clean:
 
 install: install-rh-agent install-pulseaudio
 
-install-rh-agent: appvm install-common
-	install -m 0644 -D appvm-scripts/qubes-gui-agent.service \
-		$(DESTDIR)/$(SYSLIBDIR)/systemd/system/qubes-gui-agent.service
+install-rh-agent: appvm install-common install-systemd
 	install -m 0644 -D appvm-scripts/etc/sysconfig/desktop \
 		$(DESTDIR)/etc/sysconfig/desktop
 	install -D appvm-scripts/etc/X11/xinit/xinitrc.d/20qt-x11-no-mitshm.sh \
@@ -91,13 +89,11 @@ install-rh-agent: appvm install-common
 	install -D appvm-scripts/etc/X11/xinit/xinitrc.d/60xfce-desktop.sh \
 		$(DESTDIR)/etc/X11/xinit/xinitrc.d/60xfce-desktop.sh
 
-install-debian: appvm install-common install-pulseaudio
+install-debian: appvm install-common install-pulseaudio install-systemd
 	install -d $(DESTDIR)/etc/X11/Xsession.d
 	install -m 0644 appvm-scripts/etc/X11/Xsession.d/* $(DESTDIR)/etc/X11/Xsession.d/
 	install -d $(DESTDIR)/etc/xdg
 	install -m 0644 appvm-scripts/etc/xdg-debian/* $(DESTDIR)/etc/xdg
-	install -m 0644 -D appvm-scripts/qubes-gui-agent.service \
-		$(DESTDIR)/$(SYSLIBDIR)/systemd/system/qubes-gui-agent.service
 
 install-pulseaudio:
 	install -D pulse/start-pulseaudio-with-vchan \
@@ -116,6 +112,14 @@ endif
 	install -m 0644 -D appvm-scripts/etc/xdgautostart/qubes-pulseaudio.desktop \
 		$(DESTDIR)/etc/xdg/autostart/qubes-pulseaudio.desktop
 
+install-systemd:
+	install -m 0644 -D appvm-scripts/qubes-gui-agent.service \
+		$(DESTDIR)/$(SYSLIBDIR)/systemd/system/qubes-gui-agent.service
+	install -m 0644 -D appvm-scripts/qubes-gui-vncserver.service \
+		$(DESTDIR)/$(SYSLIBDIR)/systemd/system/qubes-gui-vncserver.service
+	install -m 0644 -D appvm-scripts/qubes-gui-agent.service \
+		$(DESTDIR)/$(SYSLIBDIR)/systemd/system/qubes-gui-agent.service
+
 install-common:
 	install -D gui-agent/qubes-gui $(DESTDIR)/usr/bin/qubes-gui
 	install -D gui-common/qubes-gui-runuser $(DESTDIR)/usr/bin/qubes-gui-runuser
@@ -124,12 +128,16 @@ install-common:
                 $(DESTDIR)/etc/qubes/post-install.d/20-qubes-guivm-gui-agent.sh
 	install -D appvm-scripts/usrbin/qubes-session \
 		$(DESTDIR)/usr/bin/qubes-session
+	install -D appvm-scripts/usrbin/qubes-run-xcommon \
+		$(DESTDIR)/usr/bin/qubes-run-xcommon
 	install -D appvm-scripts/usrbin/qubes-run-xorg \
 		$(DESTDIR)/usr/bin/qubes-run-xorg
 	install -D appvm-scripts/usrbin/qubes-run-xephyr \
 		$(DESTDIR)/usr/bin/qubes-run-xephyr
 	install -D appvm-scripts/usrbin/qubes-start-xephyr \
 		$(DESTDIR)/usr/bin/qubes-start-xephyr
+	install -D appvm-scripts/usrbin/qubes-run-xvnc \
+		$(DESTDIR)/usr/bin/qubes-run-xvnc
 	install -D appvm-scripts/usrbin/qubes-change-keyboard-layout \
 		$(DESTDIR)/usr/bin/qubes-change-keyboard-layout
 	install -D appvm-scripts/usrbin/qubes-set-monitor-layout \

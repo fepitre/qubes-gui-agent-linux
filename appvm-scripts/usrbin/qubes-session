@@ -27,7 +27,7 @@
 
 loginctl activate "$XDG_SESSION_ID"
 
-if qsvc guivm-gui-agent; then
+if qsvc guivm-gui-agent || qsvc guivm-vnc; then
     if [ -e "$HOME/.xinitrc" ]; then
         . "$HOME/.xinitrc"
     fi
