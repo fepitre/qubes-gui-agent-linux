@@ -1,4 +1,4 @@
-#! /bin/sh
+#!/usr/bin/sh
 
 srcdir=`dirname $0`
 test -z "$srcdir" && srcdir=.
