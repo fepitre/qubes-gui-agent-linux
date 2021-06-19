@@ -1,0 +1,15 @@
+#!/bin/sh
+
+if [ $(whoami) == "root" ]; then
+    echo "Should be run as normal user!"
+    exit 1
+fi
+
+XSESSION="/etc/X11/xinit/xinitrc"
+if [ -f /etc/X11/Xsession ]; then
+    # Debian-based distro, set Xsession appropriately
+    XSESSION="/etc/X11/Xsession qubes-session"
+fi
+
+DISPLAY_VNC=:0
+exec /usr/bin/xinit $XSESSION -- /usr/bin/qubes-run-xvnc $DISPLAY_VNC > ~/.xsession-errors 2>&1

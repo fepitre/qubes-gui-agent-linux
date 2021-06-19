@@ -94,6 +94,13 @@ Summary: XFCE desktop support for Qubes VM
 %description xfce
 XFCE desktop support for Qubes VM
 
+%package -n qubes-gui-vncserver
+Summary: Remote GuiVM support using VNC
+Requires: tigervnc-server-minimal
+
+%description -n qubes-gui-vncserver
+Remote GuiVM support using VNC
+
 %description
 The Qubes GUI agent that needs to be installed in VM in order to provide the
 Qubes fancy GUI.
@@ -158,6 +165,8 @@ rm -f %{name}-%{version}
 /usr/bin/qubes-run-xorg
 /usr/bin/qubes-run-xephyr
 /usr/bin/qubes-start-xephyr
+/usr/bin/qubes-run-xvnc
+/usr/bin/qubes-start-xvnc
 /usr/bin/qubes-change-keyboard-layout
 /usr/bin/qubes-set-monitor-layout
 %{_libdir}/xorg/modules/drivers/qubes_drv.so
@@ -197,6 +206,11 @@ rm -f %{name}-%{version}
 
 %files xfce
 /etc/X11/xinit/xinitrc.d/60xfce-desktop.sh
+
+%files -n qubes-gui-vncserver
+/lib/systemd/system/qubes-gui-vncserver.service
+/usr/bin/qubes-run-xvnc
+/usr/bin/qubes-start-xvnc
 
 %changelog
 @CHANGELOG@

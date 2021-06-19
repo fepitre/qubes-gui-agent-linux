@@ -107,10 +107,11 @@ fi
 
 if qsvc guivm-gui-agent; then
     DISPLAY_XORG=:1
-    DISPLAY_XEPHYR=:0
 
     # Create Xorg. Xephyr will be started using qubes-start-xephyr later.
     exec runuser -u "$DEFAULT_USER" -- /bin/sh -l -c "exec $XORG $DISPLAY_XORG -nolisten tcp vt07 -wr -config xorg-qubes.conf > ~/.xorg-errors 2>&1" &
+elif qsvc guivm-vnc; then
+    exec /usr/bin/qubes-gui-runuser "$DEFAULT_USER" /bin/sh -l -c /usr/bin/qubes-start-xvnc
 else
     # Use sh -l here to load all session startup scripts (/etc/profile, ~/.profile
     # etc) to populate environment. This is the environment that will be used for

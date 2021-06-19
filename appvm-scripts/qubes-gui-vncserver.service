@@ -1,0 +1,14 @@
+[Unit]
+Description=Qubes GUI VNC Server
+ConditionPathExists=/var/run/qubes-service/guivm-vnc
+After=qubes-meminfo-writer.service qubes-mount-dirs.service qubes-gui-agent.service
+
+[Service]
+StandardInput=tty
+TTYPath=/dev/tty7
+ExecStart=/usr/bin/qubes-run-xvnc
+StandardOutput=syslog
+EnvironmentFile=-/var/run/qubes-service-environment
+
+[Install]
+WantedBy=multi-user.target
