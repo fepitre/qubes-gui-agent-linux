@@ -187,7 +187,7 @@ struct qubes_stream {
     // Stream event listener.  Accessed on main thread only.
     struct spa_hook stream_listener;
     // Position control.  Pointer is immutable after being set.
-    // Pointee accessed on realtime thread only.
+    // Pointer accessed on realtime thread only.
     struct spa_io_position *position;
     // Audio format info.  Accessed only on main thread.
     struct spa_audio_info_raw info;
@@ -293,6 +293,8 @@ struct impl {
     struct spa_hook core_listener;
 
     struct qubes_stream stream[2];
+
+    qdb_handle_t qdb;
 
     uint32_t frame_size, domid;
 
@@ -520,6 +522,50 @@ static int remove_stream_cb(struct spa_loop *loop,
     }
     return 0;
 }
+
+
+
+
+// WIP
+
+
+static void qdb_cb(struct spa_source *source)
+{
+    // struct qubes_stream *stream = source->data;
+    // struct impl *impl = stream->impl;
+    pw_log_error("something happened on qubesdb!");
+}
+
+
+// static int add_qdb_cb(struct spa_loop *loop, void *user_data)
+static int add_qdb_cb(struct spa_loop *loop,
+                      bool async,
+                      uint32_t seq,
+                      const void *data,
+                      size_t size,
+                      void *user_data)
+{
+    struct impl *impl = user_data;
+    struct spa_source source;
+    int qdb_fd;
+
+    qdb_watch(impl->qdb, QUBES_AUDIOVM_QUBESDB_ENTRY);
+
+    qdb_fd = qdb_watch_fd(impl->qdb);
+    pw_log_error("%d", qdb_fd);
+    spa_assert_se(qdb_fd != -EPIPE);
+
+    source.loop = loop;
+    source.mask = SPA_IO_IN;
+    source.data = NULL;
+    source.fd = qdb_fd;
+    source.func = qdb_cb;
+
+    pw_log_error("something!");
+
+    return spa_loop_add_source(loop, &source);
+}
+
 
 static void vchan_ready(struct spa_source *source);
 
@@ -1438,6 +1484,38 @@ create_stream(struct impl *impl, enum spa_direction direction)
     return 0;
 }
 
+
+int get_domid_from_qdb(struct impl *impl)
+{
+    size_t domid;
+
+    char *qdb_entry = qdb_read(impl->qdb, QUBES_AUDIOVM_QUBESDB_ENTRY, NULL);
+    char *qdb_path;
+
+    if (qdb_entry == NULL) {
+        pw_log_warn("No %s entry in QubesDB. Waiting for value to be set...",
+                    QUBES_AUDIOVM_QUBESDB_ENTRY);
+        qdb_watch(impl->qdb, QUBES_AUDIOVM_QUBESDB_ENTRY);
+        while (!(qdb_entry = qdb_read(impl->qdb, QUBES_AUDIOVM_QUBESDB_ENTRY, NULL))) {
+            if ((qdb_path = qdb_read_watch(impl->qdb))) {
+                // FIXME: log level
+                pw_log_warn("%s entry has been set in QubesDB", QUBES_AUDIOVM_QUBESDB_ENTRY);
+                free(qdb_path);
+            } else {
+                pw_log_error("%s not specified, and unable to obtain %s entry from QubesDB: %m",
+                            QUBES_AUDIOVM_PW_KEY, QUBES_AUDIOVM_QUBESDB_ENTRY);
+                return -errno;
+            }
+        }
+    }
+
+    if ((domid = parse_number(qdb_entry, INT_MAX / 2, &domid, "domain ID")))
+        return -errno;
+    free(qdb_entry);
+    return domid;
+}
+
+
 SPA_EXPORT
 int pipewire__module_init(struct pw_impl_module *module, const char *args)
 {
@@ -1446,7 +1524,7 @@ int pipewire__module_init(struct pw_impl_module *module, const char *args)
     const struct pw_properties *global_props = NULL;
     struct impl *impl;
     const char *str;
-    const char *peer_domain_prop = NULL;
+//    const char *peer_domain_prop = NULL;
     int res = -EFAULT; /* should never be returned, modulo bugs */
 
 #ifdef PW_LOG_TOPIC_INIT
@@ -1544,43 +1622,16 @@ int pipewire__module_init(struct pw_impl_module *module, const char *args)
         goto error;
     }
 
-    if ((peer_domain_prop = pw_properties_get(props, QUBES_AUDIOVM_PW_KEY)) == NULL) {
-        qdb_handle_t qdb = qdb_open(NULL);
-        if (!qdb) {
-            res = -errno;
-            pw_log_error("Could not open QubesDB to get %s property: %m",
-                     QUBES_AUDIOVM_PW_KEY);
-            goto error;
-        }
-
-        char *qdb_entry = qdb_read(qdb, QUBES_AUDIOVM_QUBESDB_ENTRY, NULL);
-        if (qdb_entry == NULL) {
-            res = -errno;
-            if (res == -ENOENT)
-                pw_log_error("%s not specified, and no %s entry in QubesDB",
-                         QUBES_AUDIOVM_PW_KEY, QUBES_AUDIOVM_QUBESDB_ENTRY);
-            else
-                pw_log_error("%s not specified, and unable to obtain %s entry from QubesDB: %m",
-                         QUBES_AUDIOVM_PW_KEY, QUBES_AUDIOVM_QUBESDB_ENTRY);
-            qdb_close(qdb);
-            goto error;
-        }
-        qdb_close(qdb);
-        pw_properties_set(props, QUBES_AUDIOVM_PW_KEY, qdb_entry);
-        free(qdb_entry);
-        if (!(peer_domain_prop = pw_properties_get(props, QUBES_AUDIOVM_PW_KEY))) {
-            pw_log_error("Failed to set %s key - out of memory?", QUBES_AUDIOVM_PW_KEY);
-            res = -ENOMEM;
-            goto error;
-        }
+    qdb_handle_t qdb = qdb_open(NULL);
+    if (!qdb) {
+        res = -errno;
+        pw_log_error("Could not open QubesDB");
+        goto error;
     }
+    impl->qdb = qdb;
+    impl->domid = get_domid_from_qdb(impl);
 
     {
-        size_t domid;
-        if ((res = parse_number(peer_domain_prop, INT_MAX / 2, &domid, "domain ID")))
-            goto error;
-        impl->domid = domid;
-
         size_t read_min = 0x100000, write_min = 0x10000;
         const char *record_size = pw_properties_get(props, QUBES_PW_KEY_RECORD_BUFFER_SPACE);
         const char *record_buffer_fill = pw_properties_get(props, QUBES_PW_KEY_CAPTURE_TARGET_BUFFER_FILL);
@@ -1694,6 +1745,16 @@ int pipewire__module_init(struct pw_impl_module *module, const char *args)
     for (uint8_t i = 0; i < 2; ++i)
         if ((res = connect_stream(&impl->stream[i])) != 0)
             goto error;
+
+    do {
+        res = spa_loop_invoke(impl->main_loop, add_qdb_cb, 0, NULL, 0, true, impl);
+    } while (res == -EPIPE);
+    if (res != 0) {
+        errno = -res;
+        pw_log_error("can't create qubesdb watcher: %m");
+        goto error;
+    }
+    // add_qdb_cb(impl->main_loop, impl);
 
     pw_impl_module_add_listener(module, &impl->module_listener, &module_events, impl);
 
