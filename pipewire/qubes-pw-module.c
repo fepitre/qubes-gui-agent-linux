@@ -525,21 +525,25 @@ static int remove_stream_cb(struct spa_loop *loop,
     return 0;
 }
 
-
-
-
 // WIP
-
 
 static void qdb_cb(struct spa_source *source)
 {
-    // struct qubes_stream *stream = source->data;
-    // struct impl *impl = stream->impl;
+    struct impl *impl = source->data;
+
     pw_log_error("something happened on qubesdb!");
+    for (int i = 0; i < 2; ++i) {
+        pw_log_error("closing %d", impl->stream[i].source.fd);
+        spa_loop_invoke(impl->main_loop, vchan_error_callback, 0, NULL, 0, true, &impl->stream[i]);
+    }
+
+    pw_log_error("add watch again");
+    qdb_watch(impl->qdb, QUBES_AUDIOVM_QUBESDB_ENTRY);
+    impl->qdb_watch_source.fd = qdb_watch_fd(impl->qdb);
+    spa_assert_se(impl->qdb_watch_source.fd != -EPIPE);
 }
 
 
-// static int add_qdb_cb(struct spa_loop *loop, void *user_data)
 static int add_qdb_cb(struct spa_loop *loop,
                       bool async,
                       uint32_t seq,
@@ -548,13 +552,10 @@ static int add_qdb_cb(struct spa_loop *loop,
                       void *user_data)
 {
     struct impl *impl = user_data;
-    // struct spa_source *source;
     int qdb_fd;
 
     qdb_watch(impl->qdb, QUBES_AUDIOVM_QUBESDB_ENTRY);
-
     qdb_fd = qdb_watch_fd(impl->qdb);
-    pw_log_error("%d", qdb_fd);
     spa_assert_se(qdb_fd != -EPIPE);
 
     impl->qdb_watch_source.loop = loop;
@@ -567,7 +568,6 @@ static int add_qdb_cb(struct spa_loop *loop,
 
     return spa_loop_add_source(loop, &impl->qdb_watch_source);
 }
-
 
 static void vchan_ready(struct spa_source *source);
 
@@ -1756,7 +1756,6 @@ int pipewire__module_init(struct pw_impl_module *module, const char *args)
         pw_log_error("can't create qubesdb watcher: %m");
         goto error;
     }
-    // add_qdb_cb(impl->main_loop, impl);
 
     pw_impl_module_add_listener(module, &impl->module_listener, &module_events, impl);
 
