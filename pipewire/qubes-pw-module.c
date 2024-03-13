@@ -525,50 +525,6 @@ static int remove_stream_cb(struct spa_loop *loop,
     return 0;
 }
 
-// WIP
-
-static void qdb_cb(struct spa_source *source)
-{
-    struct impl *impl = source->data;
-
-    pw_log_error("something happened on qubesdb!");
-    for (int i = 0; i < 2; ++i) {
-        pw_log_error("closing %d", impl->stream[i].source.fd);
-        spa_loop_invoke(impl->main_loop, vchan_error_callback, 0, NULL, 0, true, &impl->stream[i]);
-    }
-
-    pw_log_error("add watch again");
-    qdb_watch(impl->qdb, QUBES_AUDIOVM_QUBESDB_ENTRY);
-    impl->qdb_watch_source.fd = qdb_watch_fd(impl->qdb);
-    spa_assert_se(impl->qdb_watch_source.fd != -EPIPE);
-}
-
-
-static int add_qdb_cb(struct spa_loop *loop,
-                      bool async,
-                      uint32_t seq,
-                      const void *data,
-                      size_t size,
-                      void *user_data)
-{
-    struct impl *impl = user_data;
-    int qdb_fd;
-
-    qdb_watch(impl->qdb, QUBES_AUDIOVM_QUBESDB_ENTRY);
-    qdb_fd = qdb_watch_fd(impl->qdb);
-    spa_assert_se(qdb_fd != -EPIPE);
-
-    impl->qdb_watch_source.loop = loop;
-    impl->qdb_watch_source.mask = SPA_IO_IN;
-    impl->qdb_watch_source.data = impl;
-    impl->qdb_watch_source.fd = qdb_fd;
-    impl->qdb_watch_source.func = qdb_cb;
-
-    pw_log_error("something!");
-
-    return spa_loop_add_source(loop, &impl->qdb_watch_source);
-}
-
 static void vchan_ready(struct spa_source *source);
 
 /**
@@ -882,6 +838,76 @@ static void vchan_ready(struct spa_source *source)
         process_control_commands(stream->impl);
     }
 }
+
+int get_domid_from_qdb(struct impl *impl);
+
+// WIP
+
+static int vchan_reconnect_cb(struct spa_loop *loop,
+                                bool async,
+                                uint32_t seq,
+                                const void *data,
+                                size_t size,
+                                void *user_data)
+{
+    struct qubes_stream *stream = user_data;
+    stop_watching_vchan(stream);
+    return 0;
+}
+
+static void qdb_cb(struct spa_source *source)
+{
+    struct impl *impl = source->data;
+    uint32_t new_domid;
+    
+    pw_log_error("something happened on qubesdb!");
+    
+    new_domid = get_domid_from_qdb(impl);
+    
+    pw_log_debug("domid: %d", impl->domid);
+    pw_log_debug("new domid: %d", new_domid);
+    
+    if (new_domid != impl->domid) {
+        for (int i = 0; i < 2; ++i) {
+            pw_log_error("closing %d", impl->stream[i].source.fd);
+            spa_loop_invoke(impl->data_loop, vchan_reconnect_cb, 0, NULL, 0, true, &impl->stream[i]);
+        }
+        impl->domid = new_domid;
+    }
+}
+
+
+static int add_qdb_cb(struct spa_loop *loop,
+                      bool async,
+                      uint32_t seq,
+                      const void *data,
+                      size_t size,
+                      void *user_data)
+{
+    struct impl *impl = user_data;
+    int qdb_fd;
+
+    qdb_watch(impl->qdb, QUBES_AUDIOVM_QUBESDB_ENTRY);
+    qdb_fd = qdb_watch_fd(impl->qdb);
+    spa_assert_se(qdb_fd != -EPIPE);
+
+    impl->qdb_watch_source.loop = loop;
+    impl->qdb_watch_source.mask = SPA_IO_IN;
+    impl->qdb_watch_source.data = impl;
+    impl->qdb_watch_source.fd = qdb_fd;
+    impl->qdb_watch_source.func = qdb_cb;
+
+    pw_log_error("something!");
+
+    return spa_loop_add_source(loop, &impl->qdb_watch_source);
+}
+
+
+
+
+
+
+
 
 /**
  * Called on the realtime thread to discard unwanted data from the daemon.
