@@ -211,6 +211,7 @@ struct qubes_stream {
     uint64_t next_time;
     struct spa_source timer;
     struct rate_match rm;
+    
 };
 
 static inline bool
@@ -295,6 +296,7 @@ struct impl {
     struct qubes_stream stream[2];
 
     qdb_handle_t qdb;
+    struct spa_source qdb_watch_source;
 
     uint32_t frame_size, domid;
 
@@ -546,7 +548,7 @@ static int add_qdb_cb(struct spa_loop *loop,
                       void *user_data)
 {
     struct impl *impl = user_data;
-    struct spa_source source;
+    // struct spa_source *source;
     int qdb_fd;
 
     qdb_watch(impl->qdb, QUBES_AUDIOVM_QUBESDB_ENTRY);
@@ -555,15 +557,15 @@ static int add_qdb_cb(struct spa_loop *loop,
     pw_log_error("%d", qdb_fd);
     spa_assert_se(qdb_fd != -EPIPE);
 
-    source.loop = loop;
-    source.mask = SPA_IO_IN;
-    source.data = NULL;
-    source.fd = qdb_fd;
-    source.func = qdb_cb;
+    impl->qdb_watch_source.loop = loop;
+    impl->qdb_watch_source.mask = SPA_IO_IN;
+    impl->qdb_watch_source.data = impl;
+    impl->qdb_watch_source.fd = qdb_fd;
+    impl->qdb_watch_source.func = qdb_cb;
 
     pw_log_error("something!");
 
-    return spa_loop_add_source(loop, &source);
+    return spa_loop_add_source(loop, &impl->qdb_watch_source);
 }
 
 
