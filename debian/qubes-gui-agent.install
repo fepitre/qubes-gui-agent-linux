@@ -38,5 +38,6 @@ usr/lib/qubes/gtk4-workarounds.sh
 usr/lib/qubes/qubes-gui-agent-pre.sh
 usr/lib/qubes/qubes-keymap.sh
 usr/lib/qubes/qubes-xorg-wrapper
+usr/lib/qubes/qubes-clipboard-image-convert
 usr/share/glib-2.0/schemas/20_qubes-gui-vm.gschema.override
 var/log/qubes

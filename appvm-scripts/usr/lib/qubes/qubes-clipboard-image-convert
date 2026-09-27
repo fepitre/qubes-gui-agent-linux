@@ -1,0 +1,84 @@
+#!/usr/bin/python3
+# Convert clipboard images between an encoded format and raw RGBA.
+#
+# The raw side is struct msg_clipboard_image (width, height as native uint32)
+# followed by width * height * 4 bytes of RGBA.
+#
+# torgba: stdin is an encoded image, stdout is the raw form
+# topng:  stdin is the raw form, stdout is a PNG
+
+import struct
+import sys
+
+import gi
+
+gi.require_version("GdkPixbuf", "2.0")
+from gi.repository import GdkPixbuf, Gio, GLib  # noqa: E402
+
+MAX_WIDTH = 4096
+MAX_HEIGHT = 4096
+HEADER = struct.Struct("=II")
+
+
+def to_rgba(data):
+    loader = GdkPixbuf.PixbufLoader()
+    loader.write(data)
+    loader.close()
+    pixbuf = loader.get_pixbuf()
+    if pixbuf is None:
+        raise ValueError("cannot decode image")
+    if not pixbuf.get_has_alpha():
+        pixbuf = pixbuf.add_alpha(False, 0, 0, 0)
+    width, height = pixbuf.get_width(), pixbuf.get_height()
+    if not 0 < width <= MAX_WIDTH or not 0 < height <= MAX_HEIGHT:
+        raise ValueError("image too large: %dx%d" % (width, height))
+    rowstride = pixbuf.get_rowstride()
+    pixels = pixbuf.get_pixels()
+    rows = [pixels[y * rowstride : y * rowstride + width * 4] for y in range(height)]
+    sys.stdout.buffer.write(HEADER.pack(width, height))
+    sys.stdout.buffer.write(b"".join(rows))
+
+
+def to_png(data):
+    if len(data) < HEADER.size:
+        raise ValueError("truncated image header")
+    width, height = HEADER.unpack_from(data)
+    pixels = data[HEADER.size :]
+    if not 0 < width <= MAX_WIDTH or not 0 < height <= MAX_HEIGHT:
+        raise ValueError("image too large: %dx%d" % (width, height))
+    if len(pixels) != width * height * 4:
+        raise ValueError("pixel data does not match %dx%d" % (width, height))
+    pixbuf = GdkPixbuf.Pixbuf.new_from_bytes(
+        GLib.Bytes.new(pixels),
+        GdkPixbuf.Colorspace.RGB,
+        True,
+        8,
+        width,
+        height,
+        width * 4,
+    )
+    stream = Gio.MemoryOutputStream.new_resizable()
+    pixbuf.save_to_streamv(stream, "png", None, None)
+    stream.close()
+    sys.stdout.buffer.write(stream.steal_as_bytes().get_data())
+
+
+def main():
+    if len(sys.argv) != 2 or sys.argv[1] not in ("torgba", "topng"):
+        print("usage: %s torgba|topng" % sys.argv[0], file=sys.stderr)
+        return 2
+    data = sys.stdin.buffer.read()
+    try:
+        if sys.argv[1] == "torgba":
+            to_rgba(data)
+        else:
+            to_png(data)
+    except (ValueError, GLib.Error) as err:
+        print("clipboard image conversion failed: %s" % err, file=sys.stderr)
+        return 1
+    sys.stdout.buffer.flush()
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

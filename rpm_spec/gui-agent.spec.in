@@ -110,6 +110,14 @@ Requires:   xdpyinfo
 Requires:   xprop
 Requires:   xrandr
 Requires:   libunistring
+# clipboard image conversion helper
+%if 0%{?is_opensuse}
+Requires:   python%{python3_pkgversion}-gobject
+Requires:   typelib-1_0-GdkPixbuf-2_0
+%else
+Requires:   python%{python3_pkgversion}-gobject-base
+Requires:   gdk-pixbuf2
+%endif
 
 Provides:   qubes-gui-vm = %{version}-%{release}
 Obsoletes:  qubes-gui-vm < 4.0.0
@@ -336,6 +344,7 @@ rm -f %{name}-%{version}
 /usr/lib/qubes/qubes-gui-agent-pre.sh
 /usr/lib/qubes/qubes-keymap.sh
 /usr/lib/qubes/qubes-xorg-wrapper
+/usr/lib/qubes/qubes-clipboard-image-convert
 %{_datadir}/glib-2.0/schemas/20_qubes-gui-vm.gschema.override
 /usr/lib/qubes/icon-sender
 /etc/xdg/autostart/qubes-gtk4-workarounds.desktop

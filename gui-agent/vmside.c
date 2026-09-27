@@ -79,7 +79,7 @@
 /* Supported protocol version */
 
 #define PROTOCOL_VERSION_MAJOR 1
-#define PROTOCOL_VERSION_MINOR 8
+#define PROTOCOL_VERSION_MINOR 9
 #define PROTOCOL_VERSION (PROTOCOL_VERSION_MAJOR << 16 | PROTOCOL_VERSION_MINOR)
 
 #if !(PROTOCOL_VERSION_MAJOR == QUBES_GUID_PROTOCOL_VERSION_MAJOR && \
@@ -123,7 +123,9 @@ typedef struct {
     Atom wm_normal_hints;  /* Atom: WM_NORMAL_HINTS */
     Atom clipboard;        /* Atom: CLIPBOARD */
     Atom targets;          /* Atom: TARGETS */
+    Atom image_png;        /* Atom: image/png */
     Atom qprop;            /* Atom: QUBES_SELECTION */
+    Atom incr;             /* Atom: INCR */
     Atom compound_text;    /* Atom: COMPOUND_TEXT */
     Atom xembed;           /* Atom: _XEMBED */
     int xserver_fd;
@@ -132,6 +134,12 @@ typedef struct {
     Window stub_win;    /* window for clipboard operations and to simulate LeaveNotify events */
     unsigned char *clipboard_data;
     unsigned int clipboard_data_len;
+    bool clipboard_is_image;    /* clipboard_data holds msg_clipboard_image + RGBA */
+    unsigned int clipboard_image_width;
+    unsigned int clipboard_image_height;
+    unsigned char *incr_data;   /* selection received in INCR chunks */
+    unsigned int incr_data_len;
+    bool incr_active;
     Time clipboard_last_access;
     bool clipboard_wipe;
     int log_level;
@@ -1201,20 +1209,183 @@ static void send_clipboard_data(libvchan_t *vchan, XID window, char *data, uint3
     write_data(vchan, (char *) data, len);
 }
 
+#define CLIPBOARD_IMAGE_HELPER "/usr/lib/qubes/qubes-clipboard-image-convert"
+
+static bool write_all_fd(int fd, const char *buf, size_t len)
+{
+    while (len) {
+        ssize_t written = write(fd, buf, len);
+        if (written < 0) {
+            if (errno == EINTR)
+                continue;
+            perror("write");
+            return false;
+        }
+        buf += written;
+        len -= written;
+    }
+    return true;
+}
+
+/* convert between an encoded image and msg_clipboard_image + RGBA,
+ * returns malloc()ed output of the helper */
+static char *run_image_helper(const char *mode, const char *in, size_t in_len,
+        size_t *out_len)
+{
+    int sockets[2];
+    pid_t pid;
+    int status = -1;
+    char *out;
+    size_t capacity = 1 << 16, used = 0;
+
+    *out_len = 0;
+    if (in_len > MAX_CLIPBOARD_IMAGE_BUFFER_SIZE + sizeof(struct msg_clipboard_image))
+        return NULL;
+    if (socketpair(AF_UNIX, SOCK_STREAM|SOCK_CLOEXEC, 0, sockets)) {
+        perror("socketpair");
+        return NULL;
+    }
+    switch (pid = fork()) {
+        case -1:
+            perror("fork");
+            close(sockets[0]);
+            close(sockets[1]);
+            return NULL;
+        case 0:
+            if (dup2(sockets[0], 0) != -1 && dup2(sockets[0], 1) != -1)
+                execl(CLIPBOARD_IMAGE_HELPER, CLIPBOARD_IMAGE_HELPER, mode,
+                        (char *)NULL);
+            perror(CLIPBOARD_IMAGE_HELPER);
+            _exit(1);
+        default:
+            break;
+    }
+    close(sockets[0]);
+    out = malloc(capacity);
+    if (!out) {
+        perror("malloc");
+        exit(1);
+    }
+    /* the helper reads until EOF before answering, so this cannot deadlock */
+    if (!write_all_fd(sockets[1], in, in_len) || shutdown(sockets[1], SHUT_WR)) {
+        free(out);
+        out = NULL;
+    }
+    while (out) {
+        ssize_t got;
+        if (used == capacity) {
+            char *bigger;
+            if (capacity > MAX_CLIPBOARD_IMAGE_BUFFER_SIZE) {
+                fputs("clipboard image conversion output too large\n", stderr);
+                free(out);
+                out = NULL;
+                break;
+            }
+            capacity *= 2;
+            bigger = realloc(out, capacity);
+            if (!bigger) {
+                perror("realloc");
+                free(out);
+                out = NULL;
+                break;
+            }
+            out = bigger;
+        }
+        got = read(sockets[1], out + used, capacity - used);
+        if (got < 0) {
+            if (errno == EINTR)
+                continue;
+            perror("read");
+            free(out);
+            out = NULL;
+            break;
+        }
+        if (got == 0)
+            break;
+        used += got;
+    }
+    close(sockets[1]);
+    while (waitpid(pid, &status, 0) == -1 && errno == EINTR) { }
+    if (out && (!WIFEXITED(status) || WEXITSTATUS(status) != 0)) {
+        free(out);
+        out = NULL;
+    }
+    if (out)
+        *out_len = used;
+    return out;
+}
+
+static bool valid_clipboard_image(const struct msg_clipboard_image *img, size_t pixels_len)
+{
+    return img->width > 0 && img->height > 0 &&
+        img->width <= MAX_CLIPBOARD_IMAGE_WIDTH &&
+        img->height <= MAX_CLIPBOARD_IMAGE_HEIGHT &&
+        (uint64_t)img->width * img->height * 4 == (uint64_t)pixels_len &&
+        pixels_len <= MAX_CLIPBOARD_IMAGE_BUFFER_SIZE;
+}
+
+static void send_clipboard_image_data(Ghandles * g, XID window,
+        const char *encoded, size_t encoded_len)
+{
+    struct msg_hdr hdr;
+    struct msg_clipboard_image img;
+    char *rgba;
+    size_t rgba_len;
+
+    if (g->protocol_version < QUBES_GUID_MIN_CLIPBOARD_IMAGE) {
+        fputs("gui-daemon is too old for clipboard images\n", stderr);
+        send_clipboard_data(g->vchan, window, NULL, 0, g->protocol_version);
+        return;
+    }
+    rgba = run_image_helper("torgba", encoded, encoded_len, &rgba_len);
+    if (!rgba || rgba_len <= sizeof(img)) {
+        free(rgba);
+        send_clipboard_data(g->vchan, window, NULL, 0, g->protocol_version);
+        return;
+    }
+    memcpy(&img, rgba, sizeof(img));
+    if (!valid_clipboard_image(&img, rgba_len - sizeof(img))) {
+        fputs("clipboard image conversion returned garbage\n", stderr);
+        free(rgba);
+        send_clipboard_data(g->vchan, window, NULL, 0, g->protocol_version);
+        return;
+    }
+    hdr.type = MSG_CLIPBOARD_DATA_IMAGE;
+    hdr.window = window;
+    hdr.untrusted_len = rgba_len;
+    /* write_data, not real_write_message: an image is far bigger than the
+     * vchan ring buffer, which libvchan_send cannot handle */
+    write_struct(g->vchan, hdr);
+    write_data(g->vchan, rgba, rgba_len);
+    free(rgba);
+}
+
 static void handle_targets_list(Ghandles * g, unsigned char *data, int len)
 {
     Atom *atoms = (Atom *) data;
     int i;
-    int have_utf8 = 0;
+    int have_utf8 = 0, have_text = 0, have_image = 0;
     if (g->log_level > 1)
         fprintf(stderr, "target list data size %d\n", len);
     for (i = 0; i < len; i++) {
         if (atoms[i] == g->utf8_string_atom)
             have_utf8 = 1;
+        if (atoms[i] == g->utf8_string_atom || atoms[i] == XA_STRING ||
+                atoms[i] == g->compound_text)
+            have_text = 1;
+        if (atoms[i] == g->image_png)
+            have_image = 1;
         if (g->log_level > 1)
             fprintf(stderr, "supported 0x%lx %s\n",
                     atoms[i], XGetAtomName(g->display,
                         atoms[i]));
+    }
+    /* text wins when offered, so existing behaviour does not change */
+    if (!have_text && have_image &&
+            g->protocol_version >= QUBES_GUID_MIN_CLIPBOARD_IMAGE) {
+        XConvertSelection(g->display, g->clipboard, g->image_png, g->qprop,
+                g->stub_win, g->time);
+        return;
     }
     XConvertSelection(g->display, g->clipboard,
             have_utf8 ? g->utf8_string_atom : XA_STRING, g->qprop,
@@ -1259,11 +1430,23 @@ static void process_xevent_selection(Ghandles * g, XSelectionEvent * ev)
                 g->utf8_string_atom, g->qprop,
                 g->stub_win, ev->time);
     else
-        if (type == XInternAtom(g->display, "INCR", False)) {
+        if (type == g->incr) {
+            if (ev->target == g->image_png) {
+                /* images are usually large, collect the chunks */
+                free(g->incr_data);
+                g->incr_data = NULL;
+                g->incr_data_len = 0;
+                g->incr_active = true;
+                XFree(data);
+                XDeleteProperty(g->display, g->stub_win, g->qprop);
+                return;
+            }
             char INCR_WARNING[] =
                 "Qube clipboard size over 256KiB and X11 INCR protocol support is not implemented!";
             send_clipboard_data(g->vchan, g->stub_win, (char *) &INCR_WARNING,
                                 sizeof(INCR_WARNING)-1, g->protocol_version);
+        } else if (ev->target == g->image_png) {
+            send_clipboard_image_data(g, g->stub_win, (char *) data, len);
         } else {
             send_clipboard_data(g->vchan, g->stub_win, (char *) data, len,
                                 g->protocol_version);
@@ -1271,6 +1454,66 @@ static void process_xevent_selection(Ghandles * g, XSelectionEvent * ev)
             XA_STRING, it is fine - ascii is legal UTF8 */
         }
     XFree(data);
+}
+
+/* collect INCR chunks of an image selection on the stub window */
+static void process_xevent_property_incr(Ghandles * g, XPropertyEvent * ev)
+{
+    Atom type;
+    int format;
+    unsigned long len, bytes_left, dummy;
+    unsigned char *data, *bigger;
+    size_t chunk;
+
+    g->time = ev->time;
+    if (ev->state != PropertyNewValue)
+        return;
+    XGetWindowProperty(g->display, g->stub_win, g->qprop, 0, 0, 0,
+            AnyPropertyType, &type, &format, &len, &bytes_left, &data);
+    XFree(data);
+    if (bytes_left == 0) {
+        XDeleteProperty(g->display, g->stub_win, g->qprop);
+        g->incr_active = false;
+        if (g->incr_data)
+            send_clipboard_image_data(g, g->stub_win, (char *) g->incr_data,
+                    g->incr_data_len);
+        else
+            send_clipboard_data(g->vchan, g->stub_win, NULL, 0,
+                    g->protocol_version);
+        free(g->incr_data);
+        g->incr_data = NULL;
+        g->incr_data_len = 0;
+        return;
+    }
+    if (XGetWindowProperty(g->display, g->stub_win, g->qprop, 0, bytes_left, 0,
+                AnyPropertyType, &type, &format, &len, &dummy, &data) != Success)
+        goto fail;
+    chunk = len * (format / 8);
+    if (chunk == 0 || g->incr_data_len + chunk > MAX_CLIPBOARD_IMAGE_BUFFER_SIZE) {
+        XFree(data);
+        goto fail;
+    }
+    bigger = realloc(g->incr_data, g->incr_data_len + chunk);
+    if (!bigger) {
+        perror("realloc");
+        XFree(data);
+        goto fail;
+    }
+    memcpy(bigger + g->incr_data_len, data, chunk);
+    g->incr_data = bigger;
+    g->incr_data_len += chunk;
+    XFree(data);
+    XDeleteProperty(g->display, g->stub_win, g->qprop);
+    return;
+
+fail:
+    fputs("aborting INCR clipboard image transfer\n", stderr);
+    XDeleteProperty(g->display, g->stub_win, g->qprop);
+    g->incr_active = false;
+    free(g->incr_data);
+    g->incr_data = NULL;
+    g->incr_data_len = 0;
+    send_clipboard_data(g->vchan, g->stub_win, NULL, 0, g->protocol_version);
 }
 
 static void process_xevent_selection_req(Ghandles * g,
@@ -1287,12 +1530,35 @@ static void process_xevent_selection_req(Ghandles * g,
                     g->time - g->clipboard_last_access);
         g->clipboard_data[0] = '\x00';
         g->clipboard_data_len = 1;
+        g->clipboard_is_image = false;
     }
 
     if (g->log_level > 0)
         fprintf(stderr, "selection req event, target=%s\n",
                 XGetAtomName(g->display, req->target));
     resp.property = None;
+    if (g->clipboard_is_image) {
+        if (req->target == g->targets) {
+            Atom tmp[2] = { g->targets, g->image_png };
+            XChangeProperty(g->display, req->requestor, req->property,
+                    XA_ATOM, 32, PropModeReplace,
+                    (unsigned char *)
+                    tmp, sizeof(tmp) / sizeof(tmp[0]));
+            resp.property = req->property;
+        } else if (req->target == g->image_png) {
+            size_t png_len;
+            char *png = run_image_helper("topng", (char *) g->clipboard_data,
+                    g->clipboard_data_len, &png_len);
+            if (png) {
+                XChangeProperty(g->display, req->requestor, req->property,
+                        g->image_png, 8, PropModeReplace,
+                        (unsigned char *) png, png_len);
+                free(png);
+                resp.property = req->property;
+            }
+        }
+        goto respond;
+    }
     if (req->target == g->targets) {
         Atom tmp[4] = { XA_STRING, g->targets, g->utf8_string_atom, g->compound_text };
         XChangeProperty(g->display, req->requestor, req->property,
@@ -1335,6 +1601,7 @@ static void process_xevent_selection_req(Ghandles * g,
         resp.property = req->property;
     }
 
+respond:
     if (resp.property == None)
         fprintf(stderr,
                 "Not supported selection_req target 0x%lx %s\n",
@@ -1355,6 +1622,12 @@ static void process_xevent_property(Ghandles * g, XID window, XPropertyEvent * e
     struct window_data *wd;
 
     g->time = ev->time;
+
+    if (window == g->stub_win) {
+        if (g->incr_active && ev->atom == g->qprop)
+            process_xevent_property_incr(g, ev);
+        return;
+    }
 
     l = lookup_window(g, windows_list, window, __func__);
     if (!l) {
@@ -1833,6 +2106,8 @@ static void mkghandles(Ghandles * g)
                 g->screen),
             WhitePixel(g->display,
                 g->screen));
+    /* needed to receive INCR chunks of a large selection */
+    XSelectInput(g->display, g->stub_win, PropertyChangeMask);
     if ((unsigned)snprintf(tray_sel_atom_name, sizeof(tray_sel_atom_name),
             "_NET_SYSTEM_TRAY_S%u", DefaultScreen(g->display)) >=
         sizeof tray_sel_atom_name)
@@ -1860,7 +2135,9 @@ static void mkghandles(Ghandles * g)
         { &g->wm_normal_hints,  "WM_NORMAL_HINTS" },
         { &g->clipboard,        "CLIPBOARD" },
         { &g->targets,          "TARGETS" },
+        { &g->image_png,        "image/png" },
         { &g->qprop,            "QUBES_SELECTION" },
+        { &g->incr,             "INCR" },
         { &g->compound_text,    "COMPOUND_TEXT" },
         { &g->xembed,           "_XEMBED" },
     };
@@ -2391,6 +2668,7 @@ static void handle_clipboard_data(Ghandles * g, XID UNUSED(winid),
         exit(1);
     }
     g->clipboard_data_len = len;
+    g->clipboard_is_image = false;
     read_data(g->vchan, (char *) g->clipboard_data, len);
     g->clipboard_data[len] = 0;
     g->clipboard_last_access = g->time;
@@ -2401,6 +2679,39 @@ static void handle_clipboard_data(Ghandles * g, XID UNUSED(winid),
     feed_xdriver(g, 'B', 2, 1);
     feed_xdriver(g, 'B', 2, 0);
 #endif
+}
+
+static void handle_clipboard_data_image(Ghandles * g, XID UNUSED(winid),
+        unsigned int len)
+{
+    struct msg_clipboard_image img;
+    unsigned char *data;
+    size_t data_len;
+
+    if (len < sizeof(img) || len - sizeof(img) > MAX_CLIPBOARD_IMAGE_BUFFER_SIZE)
+        errx(1, "invalid MSG_CLIPBOARD_DATA_IMAGE length %u", len);
+    data_len = len - sizeof(img);
+    data = malloc(len);
+    if (!data) {
+        perror("malloc");
+        exit(1);
+    }
+    read_data(g->vchan, (char *) data, len);
+    memcpy(&img, data, sizeof(img));
+    if (!valid_clipboard_image(&img, data_len)) {
+        free(data);
+        errx(1, "invalid clipboard image received from gui-daemon");
+    }
+    free(g->clipboard_data);
+    /* kept as sent, so it can be handed to the helper as is */
+    g->clipboard_data = data;
+    g->clipboard_data_len = len;
+    g->clipboard_is_image = true;
+    g->clipboard_image_width = img.width;
+    g->clipboard_image_height = img.height;
+    g->clipboard_last_access = g->time;
+    XSetSelectionOwner(g->display, XA_PRIMARY, g->stub_win, g->time);
+    XSetSelectionOwner(g->display, g->clipboard, g->stub_win, g->time);
 }
 
 static void handle_window_flags(Ghandles *g, XID winid)
@@ -2492,6 +2803,9 @@ static void handle_message(Ghandles * g)
             break;
         case MSG_CLIPBOARD_DATA:
             handle_clipboard_data(g, hdr.window, hdr.untrusted_len);
+            break;
+        case MSG_CLIPBOARD_DATA_IMAGE:
+            handle_clipboard_data_image(g, hdr.window, hdr.untrusted_len);
             break;
         case MSG_KEYMAP_NOTIFY:
             handle_keymap_notify(g);
