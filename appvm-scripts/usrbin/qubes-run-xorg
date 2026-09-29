@@ -78,10 +78,10 @@ if [ -f /etc/X11/Xsession ]; then
     XSESSION="/etc/X11/Xsession qubes-session"
 fi
 
-# Defaults value in case default-user value is not available
 DEFAULT_USER="$(qubesdb-read /default-user 2>/dev/null)"
 if [ -z "$DEFAULT_USER" ];then
-    DEFAULT_USER="user"
+    echo "Error: cannot read /default-user" >&2
+    exit 1
 fi
 # Make qubes input socket readable by user in case Xorg is not running as
 # root (debian for example)

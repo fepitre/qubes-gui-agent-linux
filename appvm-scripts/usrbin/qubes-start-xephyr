@@ -41,6 +41,7 @@ export DISPLAY=$DISPLAY_XEPHYR
 export XDG_SEAT=seat0
 export XDG_SESSION_CLASS=user
 
-# Run xsession into Xephyr
-user=$(qubesdb-read --default=user /default-user)
-exec /usr/bin/qubes-gui-runuser $user /usr/bin/env env DISPLAY=$DISPLAY_XORG /usr/bin/xinit $XSESSION -- /usr/bin/qubes-run-xephyr $DISPLAY_XEPHYR > ~/.xsession-errors 2>&1
+# Run xsession into Xephyr as default user
+user=$(qubesdb-read /default-user) || exit 1
+# qubes-gui-runuser takes program path then argv[0]
+exec /usr/bin/qubes-gui-runuser "$user" /bin/sh sh -c "exec env DISPLAY=$DISPLAY_XORG /usr/bin/xinit $XSESSION -- /usr/bin/qubes-run-xephyr $DISPLAY_XEPHYR > ~/.xsession-errors 2>&1"
